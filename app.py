@@ -6,6 +6,7 @@ import pytesseract
 import spacy
 import re
 import shutil
+import os
 
 # Set the path to the Tesseract executable (required for Windows)
 tesseract_cmd = shutil.which("tesseract")

@@ -15,7 +15,7 @@ else:
     raise EnvironmentError("Tesseract is not installed or not found in PATH. Please install it and try again.")
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for cross-origin requests
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 
 # Load spaCy's pre-trained NER model for personal information detection
@@ -514,6 +514,6 @@ def swagger():
         }
     })
 
-# Run the server
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=4444, debug=True)
+    port = int(os.getenv("PORT", 4444))
+    app.run(host='0.0.0.0', port=port, debug=True)

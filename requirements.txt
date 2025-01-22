@@ -1,0 +1,7 @@
+Flask
+Flask_Cors
+flask_swagger_ui
+Pillow
+pytesseract
+spacy
+

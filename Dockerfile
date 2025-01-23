@@ -43,4 +43,4 @@ EXPOSE 4444
 ENV TESSERACT_CMD=/usr/bin/tesseract
 
 # Run app.py when the container launches
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--workers=3", "--bind", "0.0.0.0:4444", "app:app"]

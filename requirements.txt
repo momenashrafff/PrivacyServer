@@ -4,4 +4,5 @@ flask_swagger_ui
 Pillow
 pytesseract
 spacy
+gunicorn
 

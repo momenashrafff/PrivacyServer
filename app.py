@@ -180,7 +180,7 @@ def detect_violations():
     # Detect PII and SPI using spaCy and regex
     doc = nlp(text)
     for ent in doc.ents:
-        if ent.label_ in ["PERSON", "GPE", "DATE", "ORG"]:  # Add more spaCy labels if needed
+        if ent.label_ in ["PERSON", "GPE", "DATE"]:  # Add more spaCy labels if needed
             violations.append({"text": ent.text, "type": "PII", "category": ent.label_})
 
     # Detect emails, phone numbers, credit cards, SSNs, etc. using regex

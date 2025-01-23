@@ -7,6 +7,37 @@ import spacy
 import re
 import shutil
 import os
+from spacy.matcher import Matcher
+import random
+
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Regex patterns for additional PII
+email_regex = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+phone_regex = r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}"  # Matches phone numbers like (123) 456-7890 or 123-456-7890
+ssn_regex = r"\d{3}-\d{2}-\d{4}"  # Matches Social Security Numbers (SSNs)
+
+# Synonyms or placeholders for sensitive entities
+location_synonyms = ["a popular city", "a well-known destination", "a major metropolitan area"]
+date_synonyms = ["a specific date", "a special day", "a particular time"]
+name_synonyms = ["a person", "someone", "an individual"]
+
+# Load spaCy's pre-trained NER model for personal information detection
+nlp = spacy.load("en_core_web_sm")
+
+sensitive_patterns = [
+    [{"ENT_TYPE": "PERSON"}],  # Match person names
+    [{"ENT_TYPE": "GPE"}],     # Match locations
+    [{"SHAPE": "ddd-ddd-dddd"}],  # Match phone numbers (e.g., 123-456-7890)
+    [{"LIKE_EMAIL": True}],    # Match email addresses
+    [{"LIKE_NUM": True, "LENGTH": 10}]  # Match 10-digit numbers (e.g., phone numbers without hyphens)
+]
+
+# Initialize the Matcher
+matcher = Matcher(nlp.vocab)
+for pattern in sensitive_patterns:
+    matcher.add("SENSITIVE_INFO", [pattern])
 
 # Set the path to the Tesseract executable (required for Windows)
 tesseract_cmd = shutil.which("tesseract")
@@ -15,12 +46,6 @@ if tesseract_cmd:
 else:
     raise EnvironmentError("Tesseract is not installed or not found in PATH. Please install it and try again.")
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
-
-
-# Load spaCy's pre-trained NER model for personal information detection
-nlp = spacy.load("en_core_web_sm")
 
 # Regex patterns for detecting sensitive information
 EMAIL_PATTERN = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
@@ -61,6 +86,86 @@ def extract_text():
         return jsonify({"text": extracted_text})
     except Exception as e:
         return jsonify({"error": f"Text extraction failed: {str(e)}"}), 500
+
+def generate_alternative_text(text):
+    """
+    Generate alternative text by replacing sensitive information with synonyms or placeholders.
+    """
+    doc = nlp(text)
+    matches = matcher(doc)
+    sensitive_spans = [doc[start:end] for _, start, end in matches]
+
+    # Replace sensitive entities detected by spaCy
+    modified_text = text
+    for span in sensitive_spans:
+        if span.label_ == "PERSON":
+            replacement = random.choice(name_synonyms)
+        elif span.label_ == "GPE":
+            replacement = random.choice(location_synonyms)
+        elif span.text.replace("-", "").isdigit() and len(span.text) == 12:
+            replacement = "[PHONE]"
+        elif any(token.like_email for token in span):  # Check if any token in the span is an email
+            replacement = "[EMAIL]"
+        else:
+            replacement = "[REDACTED]"
+        modified_text = modified_text.replace(span.text, replacement)
+
+    # Replace sensitive entities detected by regex
+    modified_text = re.sub(email_regex, "[EMAIL]", modified_text)
+    modified_text = re.sub(phone_regex, "[PHONE]", modified_text)
+    modified_text = re.sub(ssn_regex, "[SSN]", modified_text)
+
+    return modified_text
+
+def generate_dynamic_response(violation_category, violation_text):
+    """
+    Generate a dynamic suggestion and reason based on the violation category and text.
+    """
+    if violation_category == "DATE":
+        suggestion = f"Avoid sharing specific dates like '{violation_text}' or use a placeholder."
+        reason = "This protects your privacy while still allowing you to share time-related information."
+    elif violation_category == "GPE":
+        suggestion = f"Avoid sharing specific locations like '{violation_text}' or use a placeholder."
+        reason = "This protects your privacy while still allowing you to share location-related information."
+    elif violation_category == "EMAIL":
+        suggestion = f"Avoid sharing email addresses like '{violation_text}' or use a placeholder."
+        reason = "This protects your email address from being misused or spammed."
+    elif violation_category == "PHONE":
+        suggestion = f"Avoid sharing phone numbers like '{violation_text}' or use a placeholder."
+        reason = "This protects your phone number from being misused or contacted without consent."
+    elif violation_category == "SSN":
+        suggestion = f"Avoid sharing Social Security Numbers like '{violation_text}' or use a placeholder."
+        reason = "This protects your Social Security Number from being misused for identity theft."
+    elif violation_category == "API_KEY":
+        suggestion = f"Avoid exposing API keys like '{violation_text}' in your code. Use environment variables instead."
+        reason = "This keeps your API keys secure and prevents unauthorized access to your services."
+    elif violation_category == "SOURCE_CODE":
+        suggestion = f"Avoid sharing sensitive code like '{violation_text}'. Use pseudocode or redact specific details."
+        reason = "This protects your intellectual property and prevents exposure of sensitive logic."
+    elif violation_category == "COMPANY_INFO":
+        suggestion = f"Avoid sharing company-specific information like '{violation_text}'. Use a placeholder instead."
+        reason = "This protects your company's identity and prevents exposure of internal details."
+    elif violation_category == "INTERNAL_INFRASTRUCTURE":
+        suggestion = f"Avoid sharing details about internal infrastructure like '{violation_text}'. Use a generic term instead."
+        reason = "This protects your organization's internal systems and prevents security risks."
+    elif violation_category == "HEALTH_INFO":
+        suggestion = f"Avoid sharing health-related information like '{violation_text}'. Use a placeholder instead."
+        reason = "This protects your personal health information and ensures privacy."
+    elif violation_category == "CREDIT_CARD":
+        suggestion = f"Avoid sharing credit card numbers like '{violation_text}'. Use a placeholder instead."
+        reason = "This protects your payment information and prevents financial fraud."
+    elif violation_category == "IP_ADDRESS":
+        suggestion = f"Avoid sharing IP addresses like '{violation_text}'. Use a placeholder instead."
+        reason = "This protects your device information and prevents unauthorized access."
+    elif violation_category == "MAC_ADDRESS":
+        suggestion = f"Avoid sharing MAC addresses like '{violation_text}'. Use a placeholder instead."
+        reason = "This protects your device information and prevents network-related risks."
+    else:
+        suggestion = "Remove the detected violation."
+        reason = "This ensures no sensitive information is leaked."
+
+    return suggestion, reason
+
 
 # API 2: Detect violations in text
 @app.route('/detect-violations', methods=['POST'])
@@ -176,95 +281,22 @@ def suggest_solutions():
         violation_text = violation['text']
         violation_category = violation['category']
 
-        if violation_category == "DATE" and violation_type == "PII":
-            recommendations.append({
-                "action": "Generalize",
-                "original": violation_text,
-                "suggestion": "Avoid sharing specific dates or use a placeholder.",
-                "example": "We’re going on a family vacation soon.",
-                "reason": "This protects your travel plans while still sharing the news."
-            })
-        elif violation_category == "GPE" and violation_type == "PII":
-            recommendations.append({
-                "action": "Generalize",
-                "original": violation_text,
-                "suggestion": "Avoid sharing specific locations or use a placeholder.",
-                "example": "We’re going on a family vacation to a popular destination.",
-                "reason": "This protects your travel plans while still sharing the news."
-            })
-        elif violation_category == "API_KEY":
-            recommendations.append({
-                "action": "Replace",
-                "original": violation_text,
-                "suggestion": "Use environment variables or a secrets manager to store the API key.",
-                "example": "```python\nimport os\napi_key = os.getenv(\"STRIPE_API_KEY\")\n```",
-                "reason": "This keeps the key secure and out of your codebase."
-            })
-        elif violation_category == "SOURCE_CODE":
-            recommendations.append({
-                "action": "Simplify",
-                "original": violation_text,
-                "suggestion": "Share only the relevant part of the code or use pseudocode.",
-                "example": "```python\ndef process_payment(user_id, amount):\n    # Connect to payment gateway\n    # Handle payment logic\n    # Log errors if any\n```",
-                "reason": "This avoids exposing sensitive logic while still allowing you to get help."
-            })
-        elif violation_category == "COMPANY_INFO":
-            recommendations.append({
-                "action": "Anonymize",
-                "original": violation_text,
-                "suggestion": "Avoid mentioning the company name or use a placeholder.",
-                "example": "This is part of our payment processing system at our company.",
-                "reason": "This protects your company’s identity while still providing context."
-            })
-        elif violation_category == "INTERNAL_INFRASTRUCTURE":
-            recommendations.append({
-                "action": "Generalize",
-                "original": violation_text,
-                "suggestion": "Avoid mentioning internal tools or use a generic term.",
-                "example": "I’m having trouble with a bug in a tool I’m working on.",
-                "reason": "This avoids revealing internal infrastructure details."
-            })
-        elif violation_category == "HEALTH_INFO":
-            recommendations.append({
-                "action": "Obfuscate",
-                "original": violation_text,
-                "suggestion": "Avoid sharing health-related details or use a placeholder.",
-                "example": "I’ll be working from home tomorrow due to a personal commitment.",
-                "reason": "This protects your family’s privacy while still explaining your absence."
-            })
-        elif violation_category == "CREDIT_CARD":
-            recommendations.append({
-                "action": "Obfuscate",
-                "original": violation_text,
-                "suggestion": "Avoid sharing full credit card numbers or use placeholders.",
-                "example": "I used my Visa card ending in **** to pay for the tickets.",
-                "reason": "This protects your payment information while still providing context."
-            })
-        elif violation_category == "IP_ADDRESS":
-            recommendations.append({
-                "action": "Obfuscate",
-                "original": violation_text,
-                "suggestion": "Avoid sharing IP addresses or use placeholders.",
-                "example": "The IP address is ***.***.***.***.",
-                "reason": "This protects your device information while still allowing troubleshooting."
-            })
-        elif violation_category == "MAC_ADDRESS":
-            recommendations.append({
-                "action": "Obfuscate",
-                "original": violation_text,
-                "suggestion": "Avoid sharing MAC addresses or use placeholders.",
-                "example": "The MAC address is **:**:**:**:**:**.",
-                "reason": "This protects your device information while still allowing troubleshooting."
-            })
-        else:
-            recommendations.append({
-                "action": "Remove",
-                "original": violation_text,
-                "suggestion": "Remove the detected violation.",
-                "reason": "This ensures no sensitive information is leaked."
-            })
+        # Generate alternative text using spaCy and regex
+        alternative_text = generate_alternative_text(violation_text)
+
+        # Generate dynamic suggestion and reason
+        suggestion, reason = generate_dynamic_response(violation_category, violation_text)
+
+        recommendations.append({
+            "action": "Generalize",
+            "original": violation_text,
+            "suggestion": suggestion,
+            "example": alternative_text,
+            "reason": reason
+        })
 
     return jsonify({"recommendations": recommendations})
+
 
 # Swagger configuration
 SWAGGER_URL = "/swagger"  # URL for accessing the Swagger UI
